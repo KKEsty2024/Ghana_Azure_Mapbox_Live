@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mapbox Map with Azure Blob Data</title>
     <script src="https://api.mapbox.com/mapbox-gl-js/v2.12.0/mapbox-gl.js"></script>
     <link href="https://api.mapbox.com/mapbox-gl-js/v2.12.0/mapbox-gl.css" rel="stylesheet" />
@@ -28,6 +29,13 @@
         .search-input {
             width: 200px;
         }
+        .battery-container {
+            max-height: 150px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 5px;
+            background-color: #f9f9f9;
+        }
     </style>
 </head>
 <body>
@@ -52,26 +60,27 @@
 
         map.addControl(new mapboxgl.NavigationControl());
 
+        // Define a default image for fallback
+        const defaultImage = 'path/to/default-image.png';  // Replace with your own default image path
+
         // Add custom images (icons) for installed and uninstalled sites
         map.on('load', () => {
             map.loadImage('Findr logo.png', (error, image) => {
-                if (error) throw error;
-                map.addImage('installed', image);
+                map.addImage('installed', error ? defaultImage : image);
             });
+
             map.loadImage('cell tower.jpg', (error, image) => {
-                if (error) throw error;
-                map.addImage('uninstalled', image);
+                map.addImage('uninstalled', error ? defaultImage : image);
             });
 
             fetchData();
         });
 
-        const blobSasUrl = 'https://ghanastoragegen2.blob.core.windows.net/ghanaaccess/Total Sites.csv.geojson?sp=r&st=2024-11-13T10:02:54Z&se=2025-12-30T18:02:54Z&sv=2022-11-02&sr=c&sig=%2BIA0Inln91N%2B%2FUI4e7c0SPNCa14yVpWhIWM%2FKPO69Fc%3D';
+        const blobSasUrl = 'https://ghanastoragegen2.blob.core.windows.net/ghanaaccess/jsonconvert.json.geojson?sp=r&st=2024-11-13T10:02:54Z&se=2025-12-30T18:02:54Z&sv=2022-11-02&sr=c&sig=%2BIA0Inln91N%2B%2FUI4e7c0SPNCa14yVpWhIWM%2FKPO69Fc%3D';
 
         async function fetchData() {
             try {
                 const response = await fetch(blobSasUrl);
-                if (!response.ok) throw new Error('Failed to fetch data: ' + response.statusText);
                 const geoJsonData = await response.json();
                 addDataToMap(geoJsonData);
             } catch (error) {
@@ -89,45 +98,40 @@
                 layout: {
                     'icon-image': [
                         'match',
-                        ['get', 'installation_status'],
+                        ['get', 'installationStatus'],
                         'Installed', 'installed', 
                         'Uninstalled', 'uninstalled',
-                        'default icon'
+                        'default' // Fallback for missing images
                     ],
                     'icon-size': 0.05
                 }
             });
 
-            // Update installed/uninstalled counts
-            const installedCount = data.features.filter(f => f.properties.installation_status === 'Installed').length;
-            const uninstalledCount = data.features.filter(f => f.properties.installation_status === 'Uninstalled').length;
-            document.getElementById('installedCount').textContent = installedCount;
-            document.getElementById('uninstalledCount').textContent = uninstalledCount;
+            document.getElementById('installedCount').textContent = data.features.filter(f => f.properties.installationStatus === 'Installed').length;
+            document.getElementById('uninstalledCount').textContent = data.features.filter(f => f.properties.installationStatus === 'Uninstalled').length;
 
             let popup = new mapboxgl.Popup({
                 closeButton: false,
                 closeOnClick: false
             });
 
-            // Hover functionality to show site details
             map.on('mousemove', 'sites-layer', (e) => {
                 if (e.features.length > 0) {
                     const site = e.features[0].properties;
-                    let batteryNumbers = site["battery_numbers"];
-                    batteryNumbers = Array.isArray(batteryNumbers) ? batteryNumbers : [batteryNumbers];
+                    const batteryNumbers = Array.isArray(site.batteries) ? site.batteries : [site.batteries];
 
                     const batteryList = batteryNumbers.length > 0
-                        ? `<ul>${batteryNumbers.map(battery => `<li>${battery}</li>`).join('')}</ul>`
-                        : "<p>No batteries available</p>";
+                        ? `<div class="battery-container"><ul>${batteryNumbers.map(battery => `<li>${battery}</li>`).join('')}</ul></div>`
+                        : "<div class='battery-container'><p>No batteries available</p></div>";
 
-                    const trackerIMEI = site.tracker_IMEI !== 0 ? site.tracker_IMEI : 'N/A';
+                    const trackerIMEI = site.trackerIMEI !== '0' ? site.trackerIMEI : 'N/A';
 
                     popup.setLngLat(e.lngLat)
-                        .setHTML(`
-                            <h3>${site.site_name}</h3>
-                            <p><strong>Site ID:</strong> ${site.site_id}</p>
+                        .setHTML(` 
+                            <h3>${site.siteName}</h3>
+                            <p><strong>Site ID:</strong> ${site.siteNumber}</p>
                             <p><strong>Tracker IMEI:</strong> ${trackerIMEI}</p>
-                            <p><strong>Geofence Distance:</strong> ${site.geofence_distance}</p>
+                            <p><strong>Geofence Distance:</strong> ${site.geofenceMeters}</p>
                             <p><strong>Batteries:</strong></p>
                             ${batteryList}
                         `)
@@ -135,84 +139,68 @@
                 }
             });
 
-            // Remove popup when mouse leaves the site
             map.on('mouseleave', 'sites-layer', () => {
                 popup.remove();
             });
 
-            // Click functionality for showing site details
             map.on('click', 'sites-layer', (e) => {
                 const properties = e.features[0].properties;
-                let batteryNumbers = properties.battery_numbers;
-                batteryNumbers = Array.isArray(batteryNumbers) ? batteryNumbers : [batteryNumbers];
+                const batteryNumbers = Array.isArray(properties.batteries) ? properties.batteries : [properties.batteries];
 
                 const batteryList = batteryNumbers.length > 0
-                    ? `<ul>${batteryNumbers.map(battery => `<li>${battery}</li>`).join('')}</ul>`
-                    : "<p>No batteries available</p>";
+                    ? `<div class="battery-container"><ul>${batteryNumbers.map(battery => `<li>${battery}</li>`).join('')}</ul></div>`
+                    : "<div class='battery-container'><p>No batteries available</p></div>";
 
-                const trackerIMEI = properties.tracker_IMEI !== 0 ? properties.tracker_IMEI : 'N/A';
+                const trackerIMEI = properties.trackerIMEI !== '0' ? properties.trackerIMEI : 'N/A';
 
                 new mapboxgl.Popup()
                     .setLngLat(e.lngLat)
-                    .setHTML(`
-                        <h3>${properties.site_name}</h3>
-                        <p><strong>Site ID:</strong> ${properties.site_id}</p>
+                    .setHTML(` 
+                        <h3>${properties.siteName}</h3>
+                        <p><strong>Site ID:</strong> ${properties.siteNumber}</p>
                         <p><strong>Tracker IMEI:</strong> ${trackerIMEI}</p>
-                        <p><strong>Geofence Distance:</strong> ${properties.geofence_distance}</p>
+                        <p><strong>Geofence Distance:</strong> ${properties.geofenceMeters}</p>
                         <p><strong>Batteries:</strong></p>
                         ${batteryList}
                     `)
                     .addTo(map);
             });
         }
-
         function showInstalled() {
-            map.setFilter('sites-layer', ['==', ['get', 'installation_status'], 'Installed']);
-        }
+    map.setFilter('sites-layer', ['==', ['get', 'installationStatus'], 'Installed']);
+}
 
-        function showUninstalled() {
-            map.setFilter('sites-layer', ['==', ['get', 'installation_status'], 'Uninstalled']);
-        }
+function showUninstalled() {
+    map.setFilter('sites-layer', ['==', ['get', 'installationStatus'], 'Uninstalled']);
+}
 
-        function showAllSites() {
-            map.setFilter('sites-layer', null);
-        }
+function showAllSites() {
+    map.setFilter('sites-layer', null); // Clear filter to show all sites
+}
+function searchSite() {
+    const searchText = document.getElementById('siteSearch').value.toLowerCase();
 
-        function searchSite() {
-            const siteName = document.getElementById('siteSearch').value.trim().toLowerCase();
-            const features = map.querySourceFeatures('sites', {});
-            const matchingSites = features.filter(feature => feature.properties.site_name.toLowerCase().includes(siteName));
+    // Fetch all features from the source
+    const allSites = map.querySourceFeatures('sites');
 
-            if (matchingSites.length > 0) {
-                const site = matchingSites[0];
-                const coordinates = site.geometry.coordinates;
-                map.flyTo({ center: coordinates, zoom: 15 });
+    // Find the first site that matches the search text
+    const matchingSite = allSites.find(site =>
+        site.properties.siteName && site.properties.siteName.toLowerCase().includes(searchText)
+    );
 
-                // Ensure batteryNumbers is an array, even if it contains a single value or is missing
-                let batteryNumbers = site.properties.battery_numbers;
-                if (!Array.isArray(batteryNumbers)) {
-                    batteryNumbers = batteryNumbers ? [batteryNumbers] : [];
-                }
+    if (matchingSite) {
+        // Zoom into the matching site and show a popup
+        map.flyTo({ center: matchingSite.geometry.coordinates, zoom: 12 });
+        new mapboxgl.Popup()
+            .setLngLat(matchingSite.geometry.coordinates)
+            .setHTML(`<h3>${matchingSite.properties.siteName}</h3>`)
+            .addTo(map);
+    } else {
+        alert('No matching site found!');
+    }
+}
 
-                const batteryList = batteryNumbers.length > 0
-                    ? `<ul>${batteryNumbers.map(battery => `<li>${battery}</li>`).join('')}</ul>`
-                    : "<p>No batteries available</p>";
 
-                const trackerIMEI = site.properties.tracker_IMEI !== 0 ? site.properties.tracker_IMEI : 'N/A';
-
-                new mapboxgl.Popup()
-                    .setLngLat(coordinates)
-                    .setHTML(`
-                        <h3>${site.properties.site_name}</h3>
-                        <p><strong>Site ID:</strong> ${site.properties.site_id}</p>
-                        <p><strong>Tracker IMEI:</strong> ${trackerIMEI}</p>
-                        <p><strong>Geofence Distance:</strong> ${site.properties.geofence_distance}</p>
-                        <p><strong>Batteries:</strong></p>
-                        ${batteryList}
-                    `)
-                    .addTo(map);
-            }
-        }
     </script>
 </body>
 </html>
